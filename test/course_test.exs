@@ -328,6 +328,84 @@ defmodule CourseTest do
     end
   end
 
+  describe "Progress" do
+    alias Course.Progress
+
+    # Point the progress file at a fresh temp path for the duration of `fun`.
+    defp with_progress_file(fun) do
+      path = Path.join(System.tmp_dir!(), "course_test_#{System.unique_integer([:positive])}")
+      Application.put_env(:course, :progress_file, path)
+
+      try do
+        fun.(path)
+      after
+        File.rm(path)
+        Application.put_env(:course, :progress_file, nil)
+      end
+    end
+
+    test "load returns empty when there's no file" do
+      with_progress_file(fn _path ->
+        assert Progress.load() == %{code: %{}, completed: []}
+      end)
+    end
+
+    test "save then load round-trips code and completion" do
+      with_progress_file(fn _path ->
+        data = %{code: %{"L1" => "def f, do: 1"}, completed: ["L1"]}
+        assert Progress.save(data) == data
+        assert Progress.load() == data
+      end)
+    end
+
+    test "a corrupt file loads as empty instead of crashing" do
+      with_progress_file(fn path ->
+        File.write!(path, "not a term")
+        assert Progress.load() == %{code: %{}, completed: []}
+      end)
+    end
+
+    test "persistence is a no-op when the file is disabled (nil)" do
+      Application.put_env(:course, :progress_file, nil)
+      assert Progress.save(%{code: %{"L" => "x"}, completed: []}) == %{code: %{"L" => "x"}, completed: []}
+      assert Progress.load() == %{code: %{}, completed: []}
+    end
+  end
+
+  describe "App progress tracking" do
+    test "running a correct solution marks the lesson completed" do
+      state = App.init([]) |> put_code("def double(n), do: n * 2")
+      refute MapSet.member?(state.completed, lesson_title(state, 0))
+      {state, []} = App.update(:run, state)
+      assert MapSet.member?(state.completed, lesson_title(state, 0))
+    end
+
+    test "running a wrong solution does not mark it completed" do
+      state = App.init([]) |> put_code("def double(n), do: n + 1")
+      {state, []} = App.update(:run, state)
+      refute MapSet.member?(state.completed, lesson_title(state, 0))
+    end
+
+    test "init restores saved buffers and completion from disk" do
+      path = Path.join(System.tmp_dir!(), "course_app_#{System.unique_integer([:positive])}")
+      Application.put_env(:course, :progress_file, path)
+
+      try do
+        title = Enum.at(Course.Lessons.all(), 0).title
+        Course.Progress.save(%{code: %{title => "my saved code"}, completed: [title]})
+
+        state = App.init([])
+        assert Editor.to_string(state.buffers[0]) == "my saved code"
+        assert MapSet.member?(state.completed, title)
+      after
+        File.rm(path)
+        Application.put_env(:course, :progress_file, nil)
+      end
+    end
+
+    defp lesson_title(state, idx), do: Enum.at(state.lessons, idx).title
+  end
+
   describe "Highlight" do
     alias Course.Highlight
 

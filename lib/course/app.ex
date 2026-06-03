@@ -14,22 +14,51 @@ defmodule Course.App do
         idx:     non_neg_integer,   # which lesson is active
         buffers: %{idx => editor},  # Course.Editor state, kept per lesson
         result:  nil | {:ok, [check_result]} | {:error, message},
-        status:  nil | String.t()   # transient message line (e.g. unknown `:cmd`)
+        status:  nil | String.t(),  # transient message line (e.g. unknown `:cmd`)
+        completed: MapSet.t()       # titles of lessons whose checks all pass
       }
+
+  Code and completion are persisted via `Course.Progress`, so a restart resumes
+  exactly where you left off.
   """
   use TermUI.Elm
 
   alias TermUI.Event
   alias TermUI.Renderer.Style
-  alias Course.{Editor, Evaluator, Lessons}
+  alias Course.{Editor, Evaluator, Lessons, Progress}
 
   @width 74
 
   # ---- init ----
 
   def init(_opts) do
-    %{lessons: Lessons.all(), idx: 0, buffers: %{}, result: nil, status: nil}
+    saved = Progress.load()
+
+    %{
+      lessons: Lessons.all(),
+      idx: 0,
+      buffers: %{},
+      result: nil,
+      status: nil,
+      completed: MapSet.new(saved.completed)
+    }
+    |> restore_buffers(saved)
     |> ensure_buffer()
+  end
+
+  # Rebuild a buffer for every lesson that has previously-saved code.
+  defp restore_buffers(state, saved) do
+    buffers =
+      state.lessons
+      |> Enum.with_index()
+      |> Enum.reduce(%{}, fn {lesson, idx}, acc ->
+        case Map.fetch(saved.code, lesson.title) do
+          {:ok, code} -> Map.put(acc, idx, Editor.from_string(code))
+          :error -> acc
+        end
+      end)
+
+    %{state | buffers: buffers}
   end
 
   # ---- input -> messages ----
@@ -72,7 +101,9 @@ defmodule Course.App do
   def update(:run, state) do
     code = state |> current_editor() |> Editor.to_string()
     result = Evaluator.run(code, current_lesson(state).checks)
-    {%{state | result: result}, []}
+    state = %{state | result: result}
+    state = if solved?(result), do: mark_completed(state), else: state
+    {persist(state), []}
   end
 
   def update(:next, state), do: {move_lesson(state, 1), []}
@@ -80,7 +111,7 @@ defmodule Course.App do
 
   def update(:reset, state) do
     fresh = Editor.from_string(current_lesson(state).starter)
-    {put_editor(%{state | result: nil}, fresh), []}
+    {persist(put_editor(%{state | result: nil}, fresh)), []}
   end
 
   # Submitting a command line (`:q⏎` etc.) is interpreted here, not in the Vim
@@ -107,10 +138,33 @@ defmodule Course.App do
     # cursor move or mode switch).
     state =
       if Editor.to_string(ed2) != Editor.to_string(ed),
-        do: %{state | result: nil},
+        do: persist(%{state | result: nil}),
         else: state
 
     {state, []}
+  end
+
+  # ---- completion + persistence ----
+
+  defp solved?({:ok, results}), do: results != [] and Enum.all?(results, & &1.pass)
+  defp solved?(_), do: false
+
+  defp mark_completed(state),
+    do: %{state | completed: MapSet.put(state.completed, current_lesson(state).title)}
+
+  defp completed?(state, lesson), do: MapSet.member?(state.completed, lesson.title)
+  defp solved_count(state), do: Enum.count(state.lessons, &completed?(state, &1))
+
+  # Snapshot the current code (keyed by lesson title) plus the solved set to disk.
+  defp persist(state) do
+    code =
+      Enum.reduce(state.buffers, %{}, fn {idx, ed}, acc ->
+        title = Enum.at(state.lessons, idx).title
+        Map.put(acc, title, Editor.to_string(ed))
+      end)
+
+    Progress.save(%{code: code, completed: MapSet.to_list(state.completed)})
+    state
   end
 
   # `:q` / `:quit` / `:wq` / `:x` (and `!` variants) all quit; an empty command
@@ -134,9 +188,16 @@ defmodule Course.App do
     ed = current_editor(state)
 
     stack(:vertical, [
+      stack(:horizontal, [
+        text(
+          "Elixir Course — Lesson #{state.idx + 1}/#{length(state.lessons)}: #{lesson.title}",
+          Style.new(fg: :cyan, attrs: [:bold])
+        ),
+        solved_badge(state, lesson)
+      ]),
       text(
-        "Elixir Course — Lesson #{state.idx + 1}/#{length(state.lessons)}: #{lesson.title}",
-        Style.new(fg: :cyan, attrs: [:bold])
+        "#{solved_count(state)}/#{length(state.lessons)} lessons solved",
+        dim()
       ),
       rule(),
       stack(:vertical, text_lines(lesson.info)),
@@ -154,6 +215,12 @@ defmodule Course.App do
   end
 
   # ---- view helpers ----
+
+  defp solved_badge(state, lesson) do
+    if completed?(state, lesson),
+      do: text("  ✓ solved", Style.new(fg: :green, attrs: [:bold])),
+      else: text("")
+  end
 
   defp mode_label(:insert), do: "-- INSERT --  (Esc → normal)"
   defp mode_label(:visual), do: "-- VISUAL --  (motions select · d/c · Esc)"

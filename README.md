@@ -52,6 +52,14 @@ Not yet implemented (good things to add yourself): counts like `3w`, search
 `/`, registers, yank/paste, and `.` repeat. The whole Vim layer lives in
 `lib/course/vim.ex` as pure functions, with tests in `test/course_test.exs`.
 
+## Progress is saved automatically
+
+Your code for each lesson and which lessons you've solved are written to a
+local `.course_progress` file (gitignored) as you go. Restart and you pick up
+exactly where you left off — solved lessons show a green **✓ solved** badge and
+the header counts how many you've cleared. Delete `.course_progress` to start
+fresh. (The file is keyed by lesson title and disabled entirely in tests.)
+
 ## How it's built (the parts you'll extend)
 
 | File                      | Responsibility                                            |
@@ -61,6 +69,7 @@ Not yet implemented (good things to add yourself): counts like `3w`, search
 | `lib/course/vim.ex`       | The pure Vim-style modal layer (motions, operators, modes).|
 | `lib/course/highlight.ex` | A pure single-line Elixir syntax highlighter.             |
 | `lib/course/evaluator.ex` | Compiles your code and runs each lesson's checks.         |
+| `lib/course/progress.ex`  | Saves/loads your code + completion to `.course_progress`. |
 | `lib/course/app.ex`       | The Elm app: `init` / `event_to_msg` / `update` / `view`. |
 | `lib/course.ex`           | `Course.start/0` entry point.                             |
 
