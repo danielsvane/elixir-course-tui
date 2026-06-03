@@ -328,6 +328,47 @@ defmodule CourseTest do
     end
   end
 
+  describe "Highlight" do
+    alias Course.Highlight
+
+    # Find the colour assigned to the first segment whose text contains `needle`.
+    defp color_of(line, needle) do
+      Enum.find_value(Highlight.segments(line), fn {text, color} ->
+        if String.contains?(text, needle), do: {:found, color}
+      end)
+    end
+
+    test "segments reassemble into the original line" do
+      line = ~s|def double(n), do: n * 2 # hi|
+      reassembled = Highlight.segments(line) |> Enum.map_join("", fn {t, _} -> t end)
+      assert reassembled == line
+    end
+
+    test "an empty line yields a single blank, uncoloured segment" do
+      assert Highlight.segments("") == [{"", nil}]
+    end
+
+    test "keywords, modules, atoms, numbers, strings and comments get colours" do
+      assert color_of("def foo", "def") == {:found, :magenta}
+      assert color_of("Enum.map", "Enum") == {:found, :yellow}
+      assert color_of("x = :ok", ":ok") == {:found, :cyan}
+      assert color_of("n * 2", "2") == {:found, :yellow}
+      assert color_of(~s|x = "hi"|, "\"hi\"") == {:found, :green}
+      assert color_of("x # note", "# note") == {:found, :bright_black}
+      assert color_of("@moduledoc false", "@moduledoc") == {:found, :magenta}
+    end
+
+    test "plain identifiers and punctuation stay uncoloured" do
+      assert color_of("foo bar", "foo") == {:found, nil}
+      assert color_of("a + b", "+") == {:found, nil}
+    end
+
+    test "a '#' inside a string is not treated as a comment" do
+      # The whole string (including the #) should be one green segment.
+      assert color_of(~s|x = "a # b"|, "# b") == {:found, :green}
+    end
+  end
+
   describe "App command line (`:q`)" do
     defp type(state, list), do: Enum.reduce(list, state, fn k, s -> elem(App.update({:key, k}, s), 0) end)
 

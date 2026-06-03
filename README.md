@@ -3,7 +3,8 @@
 An interactive terminal course for learning Elixir, built with
 [TermUI](https://github.com/pcharbon70/term_ui). Each lesson shows some
 teaching text and a code editor; you write a solution and press a key to run
-it against the lesson's checks.
+it against the lesson's checks. The code area has Vim-style modal editing and
+live Elixir syntax highlighting.
 
 ## Run it
 
@@ -57,6 +58,8 @@ Not yet implemented (good things to add yourself): counts like `3w`, search
 |---------------------------|-----------------------------------------------------------|
 | `lib/course/lessons.ex`   | The course content as plain data. **Add lessons here.**   |
 | `lib/course/editor.ex`    | A pure multi-line text-editor model (lines + cursor).     |
+| `lib/course/vim.ex`       | The pure Vim-style modal layer (motions, operators, modes).|
+| `lib/course/highlight.ex` | A pure single-line Elixir syntax highlighter.             |
 | `lib/course/evaluator.ex` | Compiles your code and runs each lesson's checks.         |
 | `lib/course/app.ex`       | The Elm app: `init` / `event_to_msg` / `update` / `view`. |
 | `lib/course.ex`           | `Course.start/0` entry point.                             |

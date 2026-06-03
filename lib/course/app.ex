@@ -180,56 +180,84 @@ defmodule Course.App do
     |> Enum.map(fn {line, row} -> render_row(line, row, ed, sel) end)
   end
 
+  # Each row is rendered as a list of "cells" — one per character — carrying a
+  # syntax colour and whether it's reverse-highlighted (the cursor or a
+  # selection). Building rows this way lets syntax highlighting and the
+  # cursor/selection overlay compose, instead of fighting over the characters.
+
   # No selection: only the cursor row gets the block cursor.
   defp render_row(line, row, ed, nil) do
-    if row == ed.row, do: cursor_line(line, ed.col), else: text("  " <> line)
+    cells = base_cells(line)
+    cells = if row == ed.row, do: put_cursor(cells, ed.col), else: cells
+    row_node(cells)
   end
 
-  # Linewise: every row in range is fully highlighted.
+  # Linewise: every character on rows within the range is reverse-highlighted.
   defp render_row(line, row, _ed, {:lines, lo, hi}) when row >= lo and row <= hi do
-    styled(text("  " <> blank_if_empty(line)), Style.new(attrs: [:reverse]))
+    line |> base_cells() |> Enum.map(&reverse_cell/1) |> row_node()
   end
 
-  # Charwise: highlight the selected column span on rows the selection touches.
+  # Charwise: reverse-highlight the selected column span on the touched rows.
   defp render_row(line, row, _ed, {:chars, {sr, sc}, {er, ec}}) when row >= sr and row <= er do
     last = max(String.length(line) - 1, 0)
     from = if row == sr, do: sc, else: 0
     to = if row == er, do: ec, else: last
-    highlight_span(line, from, to)
+
+    line
+    |> base_cells()
+    |> Enum.with_index()
+    |> Enum.map(fn {cell, i} -> if i >= from and i <= to, do: reverse_cell(cell), else: cell end)
+    |> row_node()
   end
 
-  defp render_row(line, _row, _ed, _sel), do: text("  " <> line)
+  defp render_row(line, _row, _ed, _sel), do: line |> base_cells() |> row_node()
 
-  # Reverse-highlight columns `from..to` (inclusive) of a line.
-  defp highlight_span(line, from, to) do
-    before = String.slice(line, 0, from)
-    mid = String.slice(line, from, to - from + 1)
-    rest = String.slice(line, (to + 1)..-1//1) || ""
+  # Turn a source line into syntax-coloured cells. An empty line yields a single
+  # blank cell so the cursor/selection still has a character to land on.
+  defp base_cells(line) do
+    cells =
+      line
+      |> Course.Highlight.segments()
+      |> Enum.flat_map(fn {seg, color} ->
+        seg |> String.graphemes() |> Enum.map(&{&1, color, false})
+      end)
 
-    stack(:horizontal, [
-      text("  " <> before),
-      styled(text(blank_if_empty(mid)), Style.new(attrs: [:reverse])),
-      text(rest)
-    ])
+    if cells == [], do: [{" ", nil, false}], else: cells
   end
 
-  defp blank_if_empty(""), do: " "
-  defp blank_if_empty(s), do: s
+  defp reverse_cell({g, color, _rev}), do: {g, color, true}
 
-  defp cursor_line(line, col) do
-    {before, rest} = String.split_at(line, col)
+  # Place the block cursor at `col`; past the end of the line it's a trailing space.
+  defp put_cursor(cells, col) do
+    if col < length(cells) do
+      List.update_at(cells, col, &reverse_cell/1)
+    else
+      cells ++ [{" ", nil, true}]
+    end
+  end
 
-    {under, tail} =
-      case String.split_at(rest, 1) do
-        {"", _} -> {" ", ""}
-        {ch, more} -> {ch, more}
-      end
+  # Render cells to a horizontal stack, merging neighbours that share a style.
+  # The two-space gutter keeps the code indented from the screen edge.
+  defp row_node(cells) do
+    segments =
+      cells
+      |> Enum.chunk_by(fn {_g, color, rev} -> {color, rev} end)
+      |> Enum.map(fn group ->
+        {_g, color, rev} = hd(group)
+        str = Enum.map_join(group, "", fn {g, _, _} -> g end)
+        seg_node(str, color, rev)
+      end)
 
-    stack(:horizontal, [
-      text("  " <> before),
-      styled(text(under), Style.new(attrs: [:reverse])),
-      text(tail)
-    ])
+    stack(:horizontal, [text("  ") | segments])
+  end
+
+  defp seg_node(str, nil, false), do: text(str)
+
+  defp seg_node(str, color, rev) do
+    opts = []
+    opts = if color, do: [{:fg, color} | opts], else: opts
+    opts = if rev, do: [{:attrs, [:reverse]} | opts], else: opts
+    styled(text(str), Style.new(opts))
   end
 
   defp render_result(nil), do: [text("▶ Press Ctrl+R to run your code.", dim())]
